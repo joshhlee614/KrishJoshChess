@@ -1,86 +1,79 @@
-// src/minimax.cpp
 #include <limits>
 #include <unordered_map>
 #include <vector>
 #include <string>
-// src/board.hpp
+#include <cstdio>
+
+// --- Begin Board Definition ---
 #ifndef MINIMAX_BOARD_HPP
 #define MINIMAX_BOARD_HPP
 
 #include "bitboard.hpp"
+#include "move.hpp"
+#include "square.hpp"
+#include "piece.hpp"
 #include <string>
 #include <vector>
 
-// A very simplified board representation.
-// In a complete engine, you’d track piece placement, side to move, etc.
 class Board {
 public:
     // For illustration, we use a single Bitboard to represent occupancy.
-    // In practice, you’d likely have one Bitboard per piece type and color.
     libchess::Bitboard occupancy;
 
     Board() {
-        // Initialize board (e.g., set up starting positions)
-        // This is just a placeholder.
-        occupancy = libchess::Bitboard(/* some initial mask */);
+        // Initialize board (for demonstration, set occupancy to 0)
+        occupancy = libchess::Bitboard(0ULL);
     }
 
-    // Return a FEN-like string (you may wish to implement a proper FEN generator)
     std::string fen() const {
-        // For simplicity, return the hexadecimal value of the occupancy.
         char buffer[20];
         snprintf(buffer, sizeof(buffer), "%llx", occupancy.value());
         return std::string(buffer);
     }
 
-    // Dummy game-over check (update with real rules)
     bool is_game_over() const {
         return false;
     }
 
-    // Dummy evaluator: count bits (replace with your evaluation logic)
     int evaluate() const {
         return occupancy.count();
     }
 
-    // Dummy move generation: returns a vector of moves (here, moves can be defined as integers)
-    // You’d normally define a Move type. For simplicity, we use int.
-    std::vector<int> generate_moves() const {
-        // Return some dummy moves
-        return {0, 1, 2};
+    // Now returns a vector of libchess::Move
+    std::vector<libchess::Move> generate_moves() const {
+        return {
+            libchess::Move(libchess::Normal, squares::A2, squares::A3, Piece::Pawn),
+            libchess::Move(libchess::Normal, squares::B2, squares::B3, Piece::Pawn),
+            libchess::Move(libchess::Normal, squares::C2, squares::C3, Piece::Pawn)
+        };
     }
 
-    // Dummy move application: update the occupancy (replace with actual move logic)
-    void make_move(int move) {
-        // For demonstration, toggle a bit; in a real engine, update piece positions.
-        occupancy ^= libchess::Bitboard(1ULL << move);
+    void make_move(libchess::Move move) {
+        // For demonstration, toggle a bit at the 'from' square.
+        occupancy ^= libchess::Bitboard(1ULL << static_cast<int>(move.from()));
     }
 
-    // Dummy move undo: reverse the move
-    void undo_move(int move) {
-        // For demonstration, toggle the same bit again.
-        occupancy ^= libchess::Bitboard(1ULL << move);
+    void undo_move(libchess::Move move) {
+        occupancy ^= libchess::Bitboard(1ULL << static_cast<int>(move.from()));
     }
 };
 
 #endif  // MINIMAX_BOARD_HPP
+// --- End Board Definition ---
 
-// Include libchess headers (update paths as needed)
 #include "libchess/move.hpp"
-
 
 // Include pybind11 headers
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-
 namespace py = pybind11;
-using namespace libchess;  // Assuming libchess uses this namespace
+using namespace libchess;  // Now Move is defined
 
-// Create a transposition table keyed by board FEN (or a board hash, if available)
+// Global transposition table: key is board FEN, value is pair of (evaluation, best move)
 std::unordered_map<std::string, std::pair<int, Move>> transposition_table;
 
-// The C++ minimax function, modeled after your Python version
-std::pair<int, int> minimax(Board &board, int depth, int alpha, int beta, bool maximizing) {
+// The minimax function using alpha-beta pruning, returns a pair (score, best move)
+std::pair<int, Move> minimax(Board &board, int depth, int alpha, int beta, bool maximizing) {
     std::string board_key = board.fen();
     if (transposition_table.find(board_key) != transposition_table.end()) {
         return transposition_table[board_key];
@@ -88,12 +81,11 @@ std::pair<int, int> minimax(Board &board, int depth, int alpha, int beta, bool m
 
     if (depth == 0 || board.is_game_over()) {
         int score = board.evaluate();
-        transposition_table[board_key] = {score, libchess::Move()};
-        return {score, libchess::Move()};
-
+        transposition_table[board_key] = std::make_pair(score, Move());
+        return std::make_pair(score, Move());
     }
 
-    int best_move = -1; // Now using an integer instead of libchess::Move
+    Move best_move;  // best_move is of type libchess::Move
 
     if (maximizing) {
         int max_eval = std::numeric_limits<int>::min();
@@ -110,10 +102,11 @@ std::pair<int, int> minimax(Board &board, int depth, int alpha, int beta, bool m
             if (beta <= alpha)
                 break;
         }
-        transposition_table[board.fen()] = std::make_pair(max_eval, libchess::Move(best_move));
-        return {max_eval, best_move};
+        transposition_table[board.fen()] = std::make_pair(max_eval, best_move);
+        return std::make_pair(max_eval, best_move);
     } else {
         int min_eval = std::numeric_limits<int>::max();
+        Move best_move_local;
         auto moves = board.generate_moves();
         for (const auto &move : moves) {
             board.make_move(move);
@@ -121,23 +114,23 @@ std::pair<int, int> minimax(Board &board, int depth, int alpha, int beta, bool m
             board.undo_move(move);
             if (evaluation < min_eval) {
                 min_eval = evaluation;
-                best_move = move;
+                best_move_local = move;
             }
             beta = std::min(beta, evaluation);
             if (beta <= alpha)
                 break;
         }
-        transposition_table[board_key] = {min_eval, best_move};
-        return {min_eval, best_move};
+        transposition_table[board_key] = std::make_pair(min_eval, best_move_local);
+        return std::make_pair(min_eval, best_move_local);
     }
 }
 
 PYBIND11_MODULE(chess_minimax, m) {
     m.doc() = "C++ minimax algorithm using libchess and pybind11";
 
-    // Expose the libchess Board class
+    // Expose the Board class to Python.
     py::class_<Board>(m, "Board")
-        .def(py::init<>())  // Default constructor, which sets up the initial board
+        .def(py::init<>())
         .def("fen", &Board::fen)
         .def("make_move", &Board::make_move)
         .def("undo_move", &Board::undo_move)
@@ -145,13 +138,11 @@ PYBIND11_MODULE(chess_minimax, m) {
         .def("generate_moves", &Board::generate_moves)
         .def("evaluate", &Board::evaluate);
 
-    // Expose the minimax function
+    // Expose the minimax function.
     m.def("minimax", [](Board &board, int depth, int alpha, int beta, bool maximizing) {
         auto result = minimax(board, depth, alpha, beta, maximizing);
-        
-        // Convert move from int to a UCI string for Python compatibility
-        std::string best_move_uci = (result.second == -1) ? "" : std::to_string(result.second);
-
+        // Convert the Move to a string via its to_string() method.
+        std::string best_move_uci = (result.second == Move()) ? "" : static_cast<std::string>(result.second);
         return py::make_tuple(result.first, best_move_uci);
     }, "Run the minimax algorithm on a given board");
 }
